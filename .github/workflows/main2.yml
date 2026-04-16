@@ -7,31 +7,21 @@ on:
         description: 'Getscreen.me Account Email (Required)'
         required: true
         type: string
-      device_1:
-        description: 'Spawn Device 1?'
-        required: false
-        type: boolean
-        default: true
-      device_2:
-        description: 'Spawn Device 2?'
-        required: false
-        type: boolean
-        default: false
-      device_3:
-        description: 'Spawn Device 3?'
-        required: false
-        type: boolean
-        default: false
-      device_4:
-        description: 'Spawn Device 4?'
-        required: false
-        type: boolean
-        default: false
-      device_5:
-        description: 'Spawn Device 5?'
-        required: false
-        type: boolean
-        default: false
+      gologin_email:
+        description: 'GoLogin Account Email (Required)'
+        required: true
+        type: string
+      num_devices:
+        description: 'Number of Devices to Spawn'
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+        default: '1'
 
 jobs:
   prepare_matrix:
@@ -45,25 +35,22 @@ jobs:
         shell: python
         env:
           EMAIL: ${{ inputs.getscreen_email }}
-          D1: ${{ inputs.device_1 }}
-          D2: ${{ inputs.device_2 }}
-          D3: ${{ inputs.device_3 }}
-          D4: ${{ inputs.device_4 }}
-          D5: ${{ inputs.device_5 }}
+          NUM_DEVICES: ${{ inputs.num_devices }}
         run: |
           import os, json
           email = os.environ.get("EMAIL", "").strip()
-          devices = {
-              "1": os.environ.get("D1") == "true",
-              "2": os.environ.get("D2") == "true",
-              "3": os.environ.get("D3") == "true",
-              "4": os.environ.get("D4") == "true",
-              "5": os.environ.get("D5") == "true"
-          }
+          num_devices = int(os.environ.get("NUM_DEVICES", "1"))
+          
           includes =[]
-          for dev, is_active in devices.items():
-              if is_active and email:
-                  includes.append({"device": dev, "email": email})
+          if email:
+              # Loops up to the number of devices chosen and generates names like "1-win"
+              for i in range(1, num_devices + 1):
+                  includes.append({"device": f"{i}-win", "email": email})
+                  
+          if not includes:
+              print("Error: Valid configuration could not be generated. Exiting.")
+              exit(1)
+              
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"matrix={json.dumps({'include': includes})}\n")
   remote_session:
@@ -104,7 +91,59 @@ jobs:
           Start-Process "$env:USERPROFILE\AppData\Local\Programs\GoLogin\GoLogin.exe"
           
           Write-Host "✅ GoLogin installed and opened!"
+      - name: Automate GoLogin Login
+        shell: pwsh
+        env:
+          GOLOGIN_EMAIL: ${{ inputs.gologin_email }}
+          GOLOGIN_PASSWORD: "12341234"
+        run: |
+          Write-Host "Installing Python UI Automation tools..."
+          pip install pyautogui pygetwindow
           
+          Write-Host "Running Automation Script..."
+          python -c "
+          import pyautogui
+          import pygetwindow as gw
+          import time
+          import os
+          
+          # 1. Wait for GoLogin to open and load fully
+          print('Waiting 15 seconds for GoLogin window to appear...')
+          time.sleep(15)
+          
+          # 2. Find the GoLogin window and focus it
+          windows = gw.getWindowsWithTitle('Gologin')
+          if windows:
+              win = windows[0]
+              try:
+                  win.activate()
+                  win.maximize()
+              except:
+                  pass
+              time.sleep(3)
+              
+              # 3. From 'Email address' field, press TAB to reach 'I already have an account'
+              # Typically: Password -> Confirm -> Sign up -> Cloudflare -> Privacy -> Help -> Login Link
+              # 7-8 TABs usually reaches the bottom link.
+              print('Navigating to Login page...')
+              pyautogui.press('tab', presses=8, interval=0.5)
+              pyautogui.press('enter')
+              
+              # 4. Wait for the 'Login' page to load
+              time.sleep(4)
+              
+              # 5. Type Email and Password
+              print('Entering credentials...')
+              pyautogui.write(os.environ['GOLOGIN_EMAIL'])
+              pyautogui.press('tab')
+              
+              pyautogui.write(os.environ['GOLOGIN_PASSWORD'])
+              pyautogui.press('enter')
+              
+              print('✅ Login automated successfully.')
+          else:
+              print('❌ Could not find GoLogin window.')
+          "
       - name: Keep Runner Alive
         if: always()
         shell: pwsh
